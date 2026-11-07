@@ -1,0 +1,3 @@
+# FreshCheck uses the Python standard library only — no third-party
+# packages are needed. This file exists so Render's Python build step
+# has a requirements file to install (it installs nothing).
