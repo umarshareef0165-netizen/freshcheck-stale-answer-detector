@@ -2,6 +2,10 @@
 
 Run:  python3 server.py            (serves http://127.0.0.1:8000)
       python3 server.py 8080       (custom port)
+      PORT=10000 python3 server.py (Render-style: binds 0.0.0.0:$PORT)
+
+When the PORT environment variable is set (Render, Heroku, ...), the
+server binds 0.0.0.0 on that port; otherwise it binds 127.0.0.1 locally.
 
 Two ways to check a claim:
 - "Check freshness" — deterministic date analysis, no network, no key.
@@ -205,6 +209,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    print(f"FreshCheck on http://127.0.0.1:{port}  (Ctrl+C to stop)")
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    # Render/Heroku-style hosts set PORT; bind 0.0.0.0 there so the
+    # platform can reach the service. Locally, stay on 127.0.0.1.
+    if "PORT" in os.environ:
+        port = int(os.environ["PORT"])
+        host = "0.0.0.0"
+    else:
+        port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+        host = "127.0.0.1"
+    print(f"FreshCheck on http://{host}:{port}  (Ctrl+C to stop)")
+    HTTPServer((host, port), Handler).serve_forever()
