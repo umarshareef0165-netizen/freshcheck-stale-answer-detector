@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
 import tavily
-from analyzer import analyze
+from analyzer import analyze, analyze_claims
 from samples import SAMPLES
 
 COLORS = {"FRESH": "#1a7f37", "CHECK": "#9a6700", "STALE": "#cf222e", "UNKNOWN": "#57606a"}
@@ -49,6 +49,27 @@ def tavily_error_text(error):
         return (f"Live re-verification failed: Tavily returned HTTP "
                 f"{error[5:]}. The offline verdict above still stands.")
     return f"Live re-verification failed ({error})."
+
+
+def claims_table(claims):
+    """Per-claim freshness table (Problem Statement 06: a freshness
+    score for EACH claim). Score 0-100: 100 = evidence looks current."""
+    if not claims:
+        return ""
+    rows = "".join(
+        f"<tr><td>{html.escape(c['claim'])}</td>"
+        f"<td>{c['score']}</td>"
+        f"<td>{c['verdict']}</td>"
+        f"<td>{c['claim_date'] or 'no date'}</td></tr>"
+        for c in claims)
+    return (
+        "<h2>Per-claim freshness</h2>"
+        "<p>Each claim in the answer scored separately (0–100; 100 = "
+        "evidence looks current). A low score means re-check that claim "
+        "before reusing it.</p>"
+        '<table border="1" cellpadding="6">'
+        "<tr><th>Claim</th><th>Freshness score</th><th>Verdict</th>"
+        "<th>Claim date</th></tr>" + rows + "</table>")
 
 
 def result_block(result, reverify_form=False):
@@ -97,6 +118,7 @@ def page(result=None, form=None, reverify=None, tavily_on=False):
     result_html = ""
     if result:
         result_html = result_block(result, reverify_form=True)
+        result_html += claims_table(result.get("_claims") or [])
     reverify_html = ""
     if reverify is not None:
         if reverify.get("ok"):
@@ -121,7 +143,8 @@ def page(result=None, form=None, reverify=None, tavily_on=False):
     <h1>FreshCheck — Stale-Answer Detector</h1>
     <p>Paste an answer and its sources with dates. FreshCheck flags whether
     the evidence looks current, or whether the answer should be re-checked
-    before you reuse it. No AI model, no data stored.</p>
+    before you reuse it. Paste several claims (one per line or sentence)
+    to get a freshness score for each claim. No AI model, no data stored.</p>
     <p>{tavily_note}</p>
     <form method="post" action="/check">
       <p>Answer / claim:<br><textarea name="claim" rows="3" cols="70">{html.escape(form.get('claim', ''))}</textarea></p>
@@ -169,6 +192,8 @@ class Handler(BaseHTTPRequestHandler):
             result = analyze(sample["claim"], sample["claim_date"], sample["sources"])
             result["_claim"] = sample["claim"]
             result["_claim_date"] = sample["claim_date"]
+            result["_claims"] = analyze_claims(sample["claim"], sample["claim_date"],
+                                               sample["sources"])
             self._send(page(result, {"claim": sample["claim"],
                                      "claim_date": sample["claim_date"]},
                             tavily_on=key_on))
@@ -189,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
             offline = analyze(claim, claim_date, offline_sources)
             offline["_claim"] = claim
             offline["_claim_date"] = claim_date
+            offline["_claims"] = analyze_claims(claim, claim_date, offline_sources)
             self._send(page(offline, {"claim": claim, "claim_date": claim_date,
                                       "s1_title": get("s1_title"),
                                       "s1_url": get("s1_url"),
@@ -200,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         result = analyze(get("claim"), get("claim_date"), sources)
         result["_claim"] = get("claim")
         result["_claim_date"] = get("claim_date")
+        result["_claims"] = analyze_claims(get("claim"), get("claim_date"), sources)
         self._send(page(result, {"claim": get("claim"), "claim_date": get("claim_date"),
                                  "s1_title": get("s1_title"), "s1_url": get("s1_url"),
                                  "s1_date": get("s1_date")}, tavily_on=key_on))
