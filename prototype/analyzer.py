@@ -195,3 +195,83 @@ def analyze(claim_text, claim_date_text, sources, today=None, window_days=180):
         "sources": parsed_sources,
         "explanation": why,
     }
+
+
+# --- Per-claim freshness (Problem Statement 06: "a freshness score for
+# each claim") -----------------------------------------------------------
+# The original analyze() returns ONE verdict per answer. These helpers
+# split a multi-claim answer into its claims and score each one, so the
+# UI can render a per-claim score + verdict table.
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
+
+
+def split_claims(text):
+    """Split an answer into claims: one per line, then per sentence.
+
+    Blank lines and empty fragments are dropped. Dates inside a claim
+    (e.g. "As of 2024-01-15, ...") are left intact so analyze() can
+    extract that claim's own date from its text.
+    """
+    if not text:
+        return []
+    claims = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        for part in _SENTENCE_SPLIT_RE.split(line):
+            part = part.strip()
+            if part:
+                claims.append(part)
+    return claims
+
+
+def freshness_score(result):
+    """Per-claim freshness score, 0-100 (100 = evidence looks current).
+
+    Mapping is deliberately transparent, derived from the verdict that
+    analyze() already computed — no new judgement is invented:
+      FRESH   -> the verdict confidence (typically 85)
+      CHECK   -> 50 (needs verification before reuse)
+      STALE   -> 100 - confidence (typically 10: evidence is old and a
+                 newer source exists, or nothing supports the claim)
+      UNKNOWN -> 20 (no usable dates, so freshness cannot be shown)
+    """
+    verdict = result.get("verdict")
+    confidence = result.get("confidence", 0)
+    if verdict == "FRESH":
+        return confidence
+    if verdict == "CHECK":
+        return 50
+    if verdict == "STALE":
+        return max(0, 100 - confidence)
+    return 20
+
+
+def analyze_claims(text, claim_date_text, sources, today=None, window_days=180):
+    """Analyze each claim in `text` separately against the same sources.
+
+    Each claim is first analysed on its own embedded date (a date written
+    inside the claim text); if a claim carries no date, the caller-supplied
+    claim_date_text is used as a fallback. Returns a list of dicts, one
+    per claim: {claim, verdict, score, confidence, claim_date,
+    newest_source_date, explanation}.
+    """
+    today = today or date.today()
+    out = []
+    for claim in split_claims(text):
+        result = analyze(claim, "", sources, today=today, window_days=window_days)
+        if result.get("claim_date") is None and claim_date_text:
+            result = analyze(claim, claim_date_text, sources,
+                             today=today, window_days=window_days)
+        out.append({
+            "claim": claim,
+            "verdict": result["verdict"],
+            "score": freshness_score(result),
+            "confidence": result["confidence"],
+            "claim_date": result.get("claim_date"),
+            "newest_source_date": result.get("newest_source_date"),
+            "explanation": result["explanation"],
+        })
+    return out
